@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# HLS4ML
+folo_hls4ml/
+folo_hls4ml_Q/
