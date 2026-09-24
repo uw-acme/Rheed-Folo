@@ -7,3 +7,11 @@ folo_hls4ml_Q_Real/
 
 # Models
 Models
+# Local execution evidence and authenticated provenance state
+.dataerai/
+.venv/
+__pycache__/
+.pytest_cache/
+Utils/
+Models/
+*_hls4ml_*/

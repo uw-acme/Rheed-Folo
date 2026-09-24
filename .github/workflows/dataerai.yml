@@ -1,0 +1,23 @@
+name: Dataerai provenance
+on: [push, pull_request]
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest numpy matplotlib ipython nbclient ipykernel
+      - run: python -m pip install opencv-python==4.11.0.86 scipy tqdm h5py
+      - run: python -m pytest tests -q
+  model-recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest 'numpy<2' tensorflow==2.14.1 keras==2.14.0 qkeras==0.9.0 tensorflow-model-optimization==0.7.3 pyparsing==3.3.2
+      - run: python -c "import tensorflow; import qkeras"
+      - run: python -m pytest tests/test_model_recovery.py -q -rs

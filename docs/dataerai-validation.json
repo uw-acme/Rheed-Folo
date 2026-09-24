@@ -1,0 +1,56 @@
+{
+  "collection_url": "https://beta.dataerai.com/p/f64a673b-e254-4130-869a-3129e63c46a9/1a7efe28-2ade-46a1-85ea-f0e499d2165e",
+  "validated_code_commit": "403c56555587fd8c4c11e58656c23a3aceda36d0",
+  "local_tests_passed": 28,
+  "ci_url": "https://github.com/jagar2/Rheed-Folo/actions/runs/35106706970",
+  "completed_run": {
+    "repository": "Rheed-Folo",
+    "run_id": "e85742cb-72d6-4a72-9dcb-ae3d61969e4b",
+    "run_asset_id": "5bd77528-9e6e-4cd3-9ace-1e01c48f66ea",
+    "summary_asset_id": "f50216c9-ae99-4007-8c12-cee8fca2bf18",
+    "cell_count": 19,
+    "asset_count": 76,
+    "relationship_count": 102,
+    "status": "completed",
+    "notebook": "Generated_Flow.ipynb",
+    "git": {
+      "commit": "fc6919bc2c92adc16beeaf7b6abd1cc05ee6578f",
+      "dirty_at_start": false,
+      "repository": "https://github.com/jagar2/Rheed-Folo.git"
+    },
+    "verified_assets": 76
+  },
+  "download_verification": {
+    "repository": "Rheed-Folo",
+    "run_id": "e85742cb-72d6-4a72-9dcb-ae3d61969e4b",
+    "artifacts": [
+      {
+        "asset_id": "c203ba6e-7823-4ce8-817e-62738d5d9405",
+        "name": "baby_yolo_qk",
+        "sha256": "c27c382cfd6c338cf21097509e37af6c5cfaa428c5249c75a1c8e3e9749f7dd8",
+        "byte_identity": "passed"
+      },
+      {
+        "asset_id": "c2952ce7-26bc-4566-ae45-85cdcf41b8a8",
+        "name": "test_img_arr",
+        "sha256": "23604c9bfd86e46bd7ff6f2b46d1d1af3dfe387ac39c21bae5f7ea1934135596",
+        "byte_identity": "passed"
+      },
+      {
+        "asset_id": "6b712ca7-2cc6-4ff0-a9d0-a5a0b467256e",
+        "name": "predictions_qk",
+        "sha256": "9d84ad0ec464a7b4c0294d04c680d31482457fd8223fc616588fc4a4d20740bb",
+        "byte_identity": "passed"
+      }
+    ],
+    "model_prediction_max_abs_difference": 0.0,
+    "test_examples": 4
+  },
+  "limitations": [
+    "Generated notebooks executed with recorded smoke profile: 8 training, 4 validation, 4 test examples and 1 epoch; not a scientific accuracy evaluation.",
+    "Original experimental HDF5 inputs are unavailable. Real_Flow attempts retain missing-file errors.",
+    "Hardware validation covers actual nms_top5 RTL simulation and an existing bitstream. No Vivado/Vitis build or physical camera acquisition was performed.",
+    "Two failed upload placeholders from interrupted setup attempts remain as history; recovered executed notebooks and terminal failure summaries preserve those attempts. They are not counted as saved outputs.",
+    "For consolidated server storage, use the Console download action or the authorized files[].download_url from transfer initiation. The pinned beta SDK may try an obsolete prefix when downloading."
+  ]
+}
