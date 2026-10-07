@@ -1,0 +1,87 @@
+# Configuration for train_synthetic.py (script version of Generated_Flow.ipynb).
+#
+# Usage:
+#   python train_synthetic.py configs/synthetic.yaml
+#
+# Every constant that was a module-level global in the notebook lives here.
+
+seed: 0
+
+# ----------------------------------------------------------------------------
+# Synthetic image generation
+# ----------------------------------------------------------------------------
+image:
+  x: 320                 # IMAGE_X (width, pixels)
+  y: 320                 # IMAGE_Y (height, pixels)
+  scale_factor: 8        # SCALE_FACTOR: label cell = scale_factor x scale_factor pixels
+                         # LABEL_X = x // scale_factor, LABEL_Y = y // scale_factor
+
+gaussians:
+  crop_x: 48             # GAUSSIAN_X: spot centers are kept crop_x/2 away from the edges
+  crop_y: 48             # GAUSSIAN_Y
+  min_num: 3             # MIN_NUM_GAUSSIANS
+  max_num: 3             # MAX_NUM_GAUSSIANS
+  min_std_x: 5           # MIN_STD_X
+  max_std_x: 11          # MAX_STD_X
+  min_std_y: 5           # MIN_STD_Y
+  max_std_y: 11          # MAX_STD_Y
+  min_theta: 0           # MIN_THETA (radians; a string such as "pi" or "pi/2" is accepted)
+  max_theta: pi          # MAX_THETA
+  min_intensity: 0.2     # MIN_INTENSITY
+  max_intensity: 0.8     # MAX_INTENSITY
+
+labels:
+  soft_label_sigma: 0.75 # SOFT_LABEL_SIGMA (in label cells)
+  threshold: 0.9         # THRESHOLD (kept from the notebook; currently unused)
+
+# ----------------------------------------------------------------------------
+# Datasets
+# ----------------------------------------------------------------------------
+dataset:
+  training_size: 10000   # TRAINING_DATASET_SIZE
+  validation_size: 1000  # VALIDATION_DATASET_SIZE
+  test_size: 1000        # TEST_DATASET_SIZE
+  batch_size: 50         # BATCH_SIZE
+
+# ----------------------------------------------------------------------------
+# QKeras model
+# ----------------------------------------------------------------------------
+model:
+  name: baby_yolo
+  total_bits: 8          # TOTAL_BITS
+  integer_bits: 0        # INTEGER_BITS
+  stem_filters: [4, 6, 8]  # one stride-2 QConv2D(3x3) + quantized ReLU per entry
+  head_filters: 8        # 1x1 Conv2D before the final 1x1 Conv2D + sigmoid
+
+# ----------------------------------------------------------------------------
+# Loss
+# ----------------------------------------------------------------------------
+loss:
+  pos_weight: 5.0        # POS_WEIGHT
+  neg_weight: 1.0        # NEG_WEIGHT
+
+# ----------------------------------------------------------------------------
+# Training
+# ----------------------------------------------------------------------------
+training:
+  train: true            # TRAIN_MODEL
+  load_from: null        # LOAD_MODEL: path to a saved model to load before training/testing
+  epochs: 100            # NUM_EPOCHS
+  learning_rate: 1.0e-3
+  global_clipnorm: 1.0
+  early_stopping:
+    patience: 10         # EARLY_STOPPING_PATIENCE
+    min_delta: 1.0e-4    # MIN_DELTA
+  reduce_lr:
+    factor: 0.5
+    patience: 5
+    min_lr: 1.0e-5
+
+# ----------------------------------------------------------------------------
+# Outputs
+# ----------------------------------------------------------------------------
+output:
+  save_model: true       # SAVE_MODEL
+  models_dir: Models
+  model_name: gen_flow_model   # MODEL_NAME -> saved to <models_dir>/<model_name>
+  num_plot_examples: 4   # test examples to render (image / label / prediction) as PNGs
