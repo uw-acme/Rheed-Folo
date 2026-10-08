@@ -1,0 +1,102 @@
+# Configuration for train_real.py (script version of Real_Flow.ipynb).
+#
+# Usage:
+#   python train_real.py configs/real.yaml
+#
+# Every constant that was a module-level global in the notebook lives here.
+# Relative paths are resolved from the directory the script is run in.
+
+seed: 0
+
+# ----------------------------------------------------------------------------
+# Real RHEED frames
+# ----------------------------------------------------------------------------
+data:
+  path: ../data/STO_STO_test6_06292022-standard-compressed.h5   # RHEED_data_file
+  exclude_groups: []     # h5 groups to drop before the split (the notebook used all of them,
+                         # including background_with_heater / background_without_heater)
+  training_growths: 7    # TRAINING_GROWTHS
+  validation_growths: 2  # VALIDATION_GROWTHS
+  test_growths: 1        # TEST_GROWTHS
+  images_per_growth: 1000  # IMAGES_PER_GROWTH (frames sampled without replacement per growth)
+
+image:
+  x: 320                 # IMAGE_X: raw frames are zero-padded symmetrically up to this size
+  y: 320                 # IMAGE_Y
+  scale_factor: 8        # SCALE_FACTOR: label cell = scale_factor x scale_factor pixels
+                         # LABEL_X = x // scale_factor, LABEL_Y = y // scale_factor
+
+# ----------------------------------------------------------------------------
+# Pseudo-labels: spots found by thresholding a smoothed, log-scaled crop
+# ----------------------------------------------------------------------------
+labels:
+  clip:                  # crop (in padded-image pixels) searched for spots
+    left: 100            # LEFT_CLIP
+    right: 200           # RIGHT_CLIP
+    top: 30              # TOP_CLIP
+    bottom: 270          # BOTTOM_CLIP
+  smoothing_sigma: 2     # gaussian_filter sigma applied to log1p(crop)
+  percentile: 85         # pixels above this percentile of the smoothed crop count as spot
+  soft_label_sigma: 0.75 # SOFT_LABEL_SIGMA (in label cells)
+  threshold: 0.9         # THRESHOLD (kept from the notebook; currently unused)
+
+# Random circular shift applied to train / validation frames (test frames are not shifted)
+augment:
+  min_x_roll: 0          # MIN_X_ROLL
+  max_x_roll: 300        # MAX_X_ROLL (exclusive)
+  min_y_roll: 0          # MIN_Y_ROLL
+  max_y_roll: 300        # MAX_Y_ROLL (exclusive)
+
+# ----------------------------------------------------------------------------
+# Datasets
+# ----------------------------------------------------------------------------
+dataset:
+  training_size: 10000   # TRAINING_DATASET_SIZE (frames drawn with replacement)
+  validation_size: 1000  # VALIDATION_DATASET_SIZE
+  test_size: 1000        # TEST_DATASET_SIZE
+  batch_size: 50         # BATCH_SIZE
+
+# ----------------------------------------------------------------------------
+# QKeras model
+# ----------------------------------------------------------------------------
+model:
+  name: baby_yolo
+  total_bits: 8          # TOTAL_BITS
+  integer_bits: 0        # INTEGER_BITS
+  # One residual block per entry: stride-2 QConv2D(3x3) + quantized ReLU,
+  # then QConv2D(3x3) + BatchNorm added back onto it.
+  block_filters: [4, 6, 8]
+  head_filters: 8        # 1x1 Conv2D before the final 1x1 Conv2D + sigmoid
+
+# ----------------------------------------------------------------------------
+# Loss
+# ----------------------------------------------------------------------------
+loss:
+  pos_weight: 5.0        # POS_WEIGHT
+  neg_weight: 1.0        # NEG_WEIGHT
+
+# ----------------------------------------------------------------------------
+# Training
+# ----------------------------------------------------------------------------
+training:
+  train: true            # TRAIN_MODEL
+  load_from: null        # LOAD_MODEL: path to a saved model to load before training/testing
+  epochs: 100            # NUM_EPOCHS
+  learning_rate: 1.0e-3
+  global_clipnorm: 1.0
+  early_stopping:
+    patience: 10         # EARLY_STOPPING_PATIENCE
+    min_delta: 1.0e-4    # MIN_DELTA
+  reduce_lr:
+    factor: 0.5
+    patience: 5
+    min_lr: 1.0e-5
+
+# ----------------------------------------------------------------------------
+# Outputs
+# ----------------------------------------------------------------------------
+output:
+  save_model: true       # SAVE_MODEL
+  models_dir: Models
+  model_name: real_flow_model   # MODEL_NAME -> saved to <models_dir>/<model_name>
+  num_plot_examples: 4   # test examples to render (image / label / prediction) as PNGs

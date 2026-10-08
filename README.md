@@ -17,3 +17,16 @@ image / label / prediction plots under `plots/`.
 
 To evaluate a saved model without retraining, set `training.train: false` and
 `training.load_from: Models/<name>` in the config.
+
+## Training on real data
+
+`train_real.py` is the script version of `Real_Flow.ipynb` (minus the hls4ml
+conversion), configured by `configs/real.yaml`:
+
+```bash
+python train_real.py configs/real.yaml
+```
+
+`data.path` points at the h5 file in `FastRHEED/data/` and is relative to the
+directory the script is run from. Outputs go to `Models/<output.model_name>/`
+as above.
