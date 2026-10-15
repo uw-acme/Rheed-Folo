@@ -31,6 +31,11 @@ of a model is spots found / spots over all synthetic frames.
 Resumable: runs live in <out>/_work/seed_<k>/ and a seed whose training and evals all
 finished is not rerun. Rerun the same command after a crash or when the allocation ends.
 <out>/_work/ is deleted once the results are written (keep it with --keep-work).
+
+--eval-only reruns only the evals (e.g. after a change to inference.py) on the trained models
+already in --out, then rewrites the results: every model in <out>/_work/ if it is still there
+(an unfinished run, or one kept with --keep-work), otherwise the models kept in <out>/models/.
+In the latter case the hit rates and the kept models are over those models only.
 """
 
 from __future__ import annotations
@@ -78,7 +83,13 @@ def log(msg: str):
 
 
 def seed_dir(args, seed: int) -> Path:
-    return args.out / "_work" / f"seed_{seed}"
+    """Run directory of a seed: <out>/_work/seed_<k>, or <out>/models/seed_<k> for --eval-only
+    on a finished run. Locks and worker logs always go to <out>/_work."""
+    return args.seed_root / f"seed_{seed}"
+
+
+def has_model(d: Path) -> bool:
+    return (d / "model" / "saved_model.pb").exists()
 
 
 def eval_inputs(args) -> list[tuple[str, Path, str, int, int]]:
@@ -99,16 +110,16 @@ def run_seed(args, seed: int):
     # inherits it). A retry launched while an earlier attempt is still alive (e.g. srun
     # reported a failure but the step kept running) waits here, then finds DONE.
     d = seed_dir(args, seed)
-    lock = open(d.parent / f"seed_{seed}.lock", "w")
+    lock = open(args.out / "_work" / f"seed_{seed}.lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
-    if (d / "DONE").exists():
+    if args.eval_only:
+        if not has_model(d):
+            raise SystemExit(f"{d}: no trained model")
+    elif (d / "DONE").exists():
         return
     # SIGTERM (srun forwards it when run_trials is stopped) -> SystemExit, which makes
     # subprocess.run kill the training process instead of leaving it running
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))
-    if d.exists():
-        shutil.rmtree(d)  # leftovers of an interrupted run
-    d.mkdir(parents=True)
 
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"  # several workers share a GPU
@@ -121,23 +132,30 @@ def run_seed(args, seed: int):
                 os.environ["XLA_FLAGS"] = f"--xla_gpu_cuda_data_dir={Path(p) / 'nvidia/cuda_nvcc'}"
                 break
 
-    # The config with this seed, absolute data path and the run directory as output
-    with open(args.config, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    cfg["seed"] = seed
-    if "data" in cfg:
-        cfg["data"]["path"] = str(args.data)
-    cfg["output"].update(save_model=True, models_dir=str(d), model_name="model")
-    with open(d / "run_config.yaml", "w", encoding="utf-8") as f:
-        yaml.safe_dump(cfg, f, sort_keys=False)
+    if not args.eval_only:
+        if d.exists():
+            shutil.rmtree(d)  # leftovers of an interrupted run
+        d.mkdir(parents=True)
 
-    with open(d / "train.log", "w") as out:
-        subprocess.run([sys.executable, str(args.train), str(d / "run_config.yaml")],
-                       stdout=out, stderr=subprocess.STDOUT, cwd=FOLO_DIR, check=True,
-                       pass_fds=(lock.fileno(),))
+        # The config with this seed, absolute data path and the run directory as output
+        with open(args.config, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        cfg["seed"] = seed
+        if "data" in cfg:
+            cfg["data"]["path"] = str(args.data)
+        cfg["output"].update(save_model=True, models_dir=str(d), model_name="model")
+        with open(d / "run_config.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, sort_keys=False)
 
+        with open(d / "train.log", "w") as out:
+            subprocess.run([sys.executable, str(args.train), str(d / "run_config.yaml")],
+                           stdout=out, stderr=subprocess.STDOUT, cwd=FOLO_DIR, check=True,
+                           pass_fds=(lock.fileno(),))
+
+    shutil.rmtree(d / "eval", ignore_errors=True)
     evaluate(args, d / "model", d / "eval")
-    (d / "DONE").write_text(time.strftime("%Y-%m-%d %H:%M:%S\n"))
+    if d.parent == args.out / "_work":
+        (d / "DONE").write_text(time.strftime("%Y-%m-%d %H:%M:%S\n"))
 
 
 def evaluate(args, model_path: Path, out_dir: Path):
@@ -184,7 +202,10 @@ def seed_command(args, seed: int, node: str | None, gpu: int | None) -> list[str
     cmd = [sys.executable, str(Path(__file__).resolve()), "--out", str(args.out),
            "--config", str(args.out / "config.yaml"), "--train", str(args.train), "--data", str(args.data),
            "--synth", str(args.synth), "--gauss", str(args.gauss), "--eval-dir", str(args.eval_dir),
-           "--nms-radius", str(args.nms_radius), "--only-seed", str(seed)]
+           "--nms-radius", str(args.nms_radius), "--seed-root", str(args.seed_root),
+           "--only-seed", str(seed)]
+    if args.eval_only:
+        cmd.append("--eval-only")
     if gpu is not None:
         cmd += ["--gpu-index", str(gpu)]
     if node is None:
@@ -192,10 +213,8 @@ def seed_command(args, seed: int, node: str | None, gpu: int | None) -> list[str
     return ["srun", f"--jobid={args.jobid}", "--overlap", "-N1", "-n1", "-w", node] + cmd
 
 
-def run_all(args, seeds: list[int]) -> list[int]:
-    """Run every unfinished seed on the worker slots; return the seeds that failed."""
-    todo = [s for s in seeds if not (seed_dir(args, s) / "DONE").exists()]
-    log(f"{len(seeds) - len(todo)}/{len(seeds)} seeds already done, {len(todo)} to run")
+def run_all(args, seeds: list[int], todo: list[int]) -> list[int]:
+    """Run the seeds in todo on the worker slots; return the seeds that failed."""
     if not todo:
         return []
     jobs = queue.Queue()
@@ -210,8 +229,7 @@ def run_all(args, seeds: list[int]) -> list[int]:
                 s, attempt = jobs.get_nowait()
             except queue.Empty:
                 return
-            seed_dir(args, s).parent.mkdir(parents=True, exist_ok=True)
-            with open(seed_dir(args, s).parent / f"seed_{s}.log", "a") as out:
+            with open(args.out / "_work" / f"seed_{s}.log", "a") as out:
                 # Own session: a Ctrl-C reaches only this script, which then stops the workers
                 p = subprocess.Popen(seed_command(args, s, node, gpu), stdout=out,
                                      stderr=subprocess.STDOUT, start_new_session=True)
@@ -224,7 +242,7 @@ def run_all(args, seeds: list[int]) -> list[int]:
                 return
             where = f"{node or 'local'}" + (f" gpu {gpu}" if gpu is not None else "")
             with lock:
-                if rc == 0 and (seed_dir(args, s) / "DONE").exists():
+                if rc == 0 and (args.eval_only or (seed_dir(args, s) / "DONE").exists()):
                     done[0] += 1
                     log(f"seed {s} done on {where} ({done[0]}/{len(seeds)})")
                 elif attempt < args.retries:
@@ -392,9 +410,9 @@ def write_results(args, seeds: list[int]):
     models.mkdir(exist_ok=True)
     kept = sorted({s for p in picked.values() for s in p.values()})
     for s in kept:
-        dst = models / f"seed_{s}"
-        if not dst.exists():
-            src = seed_dir(args, s)
+        src, dst = seed_dir(args, s), models / f"seed_{s}"
+        if src.resolve() != dst.resolve():  # (--eval-only on a finished run: already in place)
+            shutil.rmtree(dst, ignore_errors=True)
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns("DONE"))
     for r in args.radii:
         for rank, s in picked[r].items():
@@ -470,11 +488,15 @@ def main():
     p.add_argument("--alpha", type=float, default=0.15, help="opacity of each box in the overlays")
     p.add_argument("--keep-work", action="store_true", help="keep <out>/_work after writing the results")
     p.add_argument("--force", action="store_true", help="rerun even if --out already holds finished results")
+    p.add_argument("--eval-only", action="store_true",
+                   help="rerun only the evals on the trained models already in --out (see above)")
     p.add_argument("--only-seed", type=int, help=argparse.SUPPRESS)  # worker: run one seed here
     p.add_argument("--gpu-index", type=int, help=argparse.SUPPRESS)
+    p.add_argument("--seed-root", type=Path, help=argparse.SUPPRESS)
     args = p.parse_args()
     for k in ("out", "config", "train", "data", "synth", "gauss", "eval_dir"):
         setattr(args, k, getattr(args, k).resolve())
+    args.seed_root = (args.seed_root or args.out / "_work").resolve()
 
     if args.only_seed is not None:
         run_seed(args, args.only_seed)
@@ -483,6 +505,9 @@ def main():
     if args.jobid and str(args.out).startswith("/tmp"):
         raise SystemExit("--out must be on a file system the compute nodes share (not /tmp)")
     work = args.out / "_work"
+    if args.eval_only:
+        eval_only(args)
+        return
     if (args.out / "trials.json").exists() and not work.exists() and not args.force:
         print((args.out / "hit_rates.md").read_text())
         log(f"{args.out} already holds finished results; pass --force to rerun")
@@ -506,7 +531,40 @@ def main():
         shutil.copy(args.config, args.out / "config.yaml")
 
     seeds = list(range(args.first_seed, args.first_seed + args.seeds))
-    failed = run_all(args, seeds)
+    todo = [s for s in seeds if not (seed_dir(args, s) / "DONE").exists()]
+    log(f"{len(seeds) - len(todo)}/{len(seeds)} seeds already done, {len(todo)} to run")
+    failed = run_all(args, seeds, todo)
+    if failed:
+        raise SystemExit(f"Seeds {failed} failed; logs in {work}. Rerun the same command to retry them.")
+
+    write_results(args, seeds)
+    if not args.keep_work:
+        shutil.rmtree(work)
+    log(f"Results in {args.out}")
+
+
+def eval_only(args):
+    """Rerun the evals on the trained models in <out>/_work (if any), else <out>/models."""
+    if args.force:
+        raise SystemExit("--eval-only and --force don't go together (--force drops the models)")
+    work = args.out / "_work"
+
+    def models_in(root: Path) -> list[int]:
+        return sorted(int(d.name.split("_")[1]) for d in root.glob("seed_*") if d.is_dir() and has_model(d))
+
+    args.seed_root = work if models_in(work) else args.out / "models"
+    seeds = models_in(args.seed_root)
+    if not seeds:
+        raise SystemExit(f"No trained models in {work} or {args.out / 'models'}")
+    # Name the training run in the results by its own script and config, not this call's defaults
+    prev = work / "setup.json" if (work / "setup.json").exists() else args.out / "trials.json"
+    if prev.exists():
+        p = json.loads(prev.read_text())
+        args.train = Path(p.get("train") or p["args"]["train"])
+        args.config = Path(p.get("args", {}).get("config", args.out / "config.yaml"))
+    log(f"Re-evaluating {len(seeds)} model(s) in {args.seed_root}")
+    work.mkdir(parents=True, exist_ok=True)
+    failed = run_all(args, seeds, seeds)
     if failed:
         raise SystemExit(f"Seeds {failed} failed; logs in {work}. Rerun the same command to retry them.")
 
