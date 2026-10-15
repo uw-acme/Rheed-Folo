@@ -31,6 +31,24 @@ python train_real.py configs/real.yaml
 directory the script is run from. Outputs go to `Models/<output.model_name>/`
 as above.
 
+## Training on real and synthetic data
+
+`train_hybrid.py` trains the `train_real.py` model on a mix of real and synthetic
+frames, configured by `configs/hybrid.yaml`:
+
+```bash
+python train_hybrid.py configs/hybrid.yaml
+```
+
+`hybrid.synthetic_fraction` (default 0.5) is the synthetic share of the training
+and validation sets. Real frames are split and labelled as in `train_real.py`,
+synthetic ones are generated as in `train_synthetic.py` (`gaussians` section).
+The model is tested on `dataset.test_size` real and `dataset.test_size`
+synthetic frames separately; `test_metrics.json` holds both losses and
+`plots/real/` and `plots/synthetic/` the example plots.
+
+To benchmark it over seeds: `python run_trials.py --out <dir> --train train_hybrid.py --config configs/hybrid.yaml`.
+
 ## Multi-seed benchmark
 
 `run_trials.py` trains FOLO with N seeds (default 30) and benchmarks every model through
