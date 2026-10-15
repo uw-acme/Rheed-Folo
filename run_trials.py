@@ -37,10 +37,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import json
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -93,9 +95,17 @@ def eval_inputs(args) -> list[tuple[str, Path, str, int, int]]:
 
 
 def run_seed(args, seed: int):
+    # One process per seed: hold this lock until the seed is done (the training subprocess
+    # inherits it). A retry launched while an earlier attempt is still alive (e.g. srun
+    # reported a failure but the step kept running) waits here, then finds DONE.
     d = seed_dir(args, seed)
+    lock = open(d.parent / f"seed_{seed}.lock", "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
     if (d / "DONE").exists():
         return
+    # SIGTERM (srun forwards it when run_trials is stopped) -> SystemExit, which makes
+    # subprocess.run kill the training process instead of leaving it running
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))
     if d.exists():
         shutil.rmtree(d)  # leftovers of an interrupted run
     d.mkdir(parents=True)
@@ -123,7 +133,8 @@ def run_seed(args, seed: int):
 
     with open(d / "train.log", "w") as out:
         subprocess.run([sys.executable, str(args.train), str(d / "run_config.yaml")],
-                       stdout=out, stderr=subprocess.STDOUT, cwd=FOLO_DIR, check=True)
+                       stdout=out, stderr=subprocess.STDOUT, cwd=FOLO_DIR, check=True,
+                       pass_fds=(lock.fileno(),))
 
     evaluate(args, d / "model", d / "eval")
     (d / "DONE").write_text(time.strftime("%Y-%m-%d %H:%M:%S\n"))
@@ -191,17 +202,26 @@ def run_all(args, seeds: list[int]) -> list[int]:
     for s in todo:
         jobs.put((s, 0))
     failed, lock, done = [], threading.Lock(), [len(seeds) - len(todo)]
+    procs, stop = set(), threading.Event()
 
     def worker(node, gpu):
-        while True:
+        while not stop.is_set():
             try:
                 s, attempt = jobs.get_nowait()
             except queue.Empty:
                 return
             seed_dir(args, s).parent.mkdir(parents=True, exist_ok=True)
             with open(seed_dir(args, s).parent / f"seed_{s}.log", "a") as out:
-                rc = subprocess.run(seed_command(args, s, node, gpu), stdout=out,
-                                    stderr=subprocess.STDOUT).returncode
+                # Own session: a Ctrl-C reaches only this script, which then stops the workers
+                p = subprocess.Popen(seed_command(args, s, node, gpu), stdout=out,
+                                     stderr=subprocess.STDOUT, start_new_session=True)
+                with lock:
+                    procs.add(p)
+                rc = p.wait()
+                with lock:
+                    procs.discard(p)
+            if stop.is_set():
+                return
             where = f"{node or 'local'}" + (f" gpu {gpu}" if gpu is not None else "")
             with lock:
                 if rc == 0 and (seed_dir(args, s) / "DONE").exists():
@@ -215,11 +235,25 @@ def run_all(args, seeds: list[int]) -> list[int]:
                     failed.append(s)
 
     threads = [threading.Thread(target=worker, args=slot, daemon=True) for slot in slurm_slots(args)]
-    for t in threads:
-        t.start()
-        time.sleep(0.2)  # stagger the srun launches
-    for t in threads:
-        t.join()
+    try:
+        for t in threads:
+            t.start()
+            time.sleep(0.2)  # stagger the srun launches
+        while any(t.is_alive() for t in threads):
+            time.sleep(1)
+    except KeyboardInterrupt:
+        stop.set()
+        with lock:
+            running = list(procs)
+        log(f"Interrupted: stopping {len(running)} running seed(s)")
+        for p in running:
+            p.terminate()  # srun forwards SIGTERM to its step; locally it goes to the worker
+        for p in running:
+            try:
+                p.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                p.kill()
+        raise SystemExit("Stopped; rerun the same command to resume")
     return sorted(failed)
 
 
