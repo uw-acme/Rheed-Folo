@@ -15,27 +15,25 @@ With one, --out must be on a file system the compute nodes share (e.g. $SCRATCH,
 
 Writes, into --out:
   hit_rates.md                 synthetic hit rates per match radius (also printed) and the
-                               models kept
+                               best, median and worst model at each radius
   hit_rates.csv                spots found per seed, radius and synthetic frame
   topcrop_overlay_synth.pdf    TopCrop boxes of every model on each synthetic frame (+ truth)
   topcrop_overlay_real.pdf     TopCrop boxes of every model on each real frame
-  models/seed_<k>/             the best, median and worst model at each radius (model,
-                               config, training log, eval outputs); models/r<r>px_<rank>
-                               link to them
+  models/seed_<k>/             every trained model (model, config, training log, eval
+                               outputs); models/r<r>px_<best|median|worst> link to the
+                               best, median and worst one at each radius
   trials.json                  arguments, seeds and the Rheed-Folo / Rheed-Eval commits
 
 A ground-truth spot is found at radius r if a TopCrop-selected FOLO cell centre lies
 within r px of it (nearest pick per spot; picks are not matched one-to-one). The hit rate
 of a model is spots found / spots over all synthetic frames.
 
-Resumable: runs live in <out>/_work/seed_<k>/ and a seed whose training and evals all
-finished is not rerun. Rerun the same command after a crash or when the allocation ends.
-<out>/_work/ is deleted once the results are written (keep it with --keep-work).
+Resumable: a seed whose training and evals all finished is not rerun. Rerun the same command
+after a crash or when the allocation ends. <out>/_work/ (locks, worker logs) is deleted once
+the results are written.
 
---eval-only reruns only the evals (e.g. after a change to inference.py) on the trained models
-already in --out, then rewrites the results: every model in <out>/_work/ if it is still there
-(an unfinished run, or one kept with --keep-work), otherwise the models kept in <out>/models/.
-In the latter case the hit rates and the kept models are over those models only.
+--eval-only reruns only the evals (e.g. after a change to inference.py) on every trained
+model in <out>/models/, then rewrites the hit rates, overlays and best/median/worst links.
 """
 
 from __future__ import annotations
@@ -83,9 +81,8 @@ def log(msg: str):
 
 
 def seed_dir(args, seed: int) -> Path:
-    """Run directory of a seed: <out>/_work/seed_<k>, or <out>/models/seed_<k> for --eval-only
-    on a finished run. Locks and worker logs always go to <out>/_work."""
-    return args.seed_root / f"seed_{seed}"
+    """Run directory of a seed (trained model, config, logs, evals); kept for good."""
+    return args.out / "models" / f"seed_{seed}"
 
 
 def has_model(d: Path) -> bool:
@@ -154,7 +151,7 @@ def run_seed(args, seed: int):
 
     shutil.rmtree(d / "eval", ignore_errors=True)
     evaluate(args, d / "model", d / "eval")
-    if d.parent == args.out / "_work":
+    if not args.eval_only:
         (d / "DONE").write_text(time.strftime("%Y-%m-%d %H:%M:%S\n"))
 
 
@@ -202,8 +199,7 @@ def seed_command(args, seed: int, node: str | None, gpu: int | None) -> list[str
     cmd = [sys.executable, str(Path(__file__).resolve()), "--out", str(args.out),
            "--config", str(args.out / "config.yaml"), "--train", str(args.train), "--data", str(args.data),
            "--synth", str(args.synth), "--gauss", str(args.gauss), "--eval-dir", str(args.eval_dir),
-           "--nms-radius", str(args.nms_radius), "--seed-root", str(args.seed_root),
-           "--only-seed", str(seed)]
+           "--nms-radius", str(args.nms_radius), "--only-seed", str(seed)]
     if args.eval_only:
         cmd.append("--eval-only")
     if gpu is not None:
@@ -405,15 +401,8 @@ def write_results(args, seeds: list[int]):
             for s, row in zip(seeds, found[r]):
                 w.writerow([s, f"{r:g}", *row, row.sum(), sum(n_spots.values())])
 
-    # Models kept: best / median / worst at each radius (a seed may hold several ranks)
+    # Best / median / worst model at each radius: links into models/ (a seed may hold several)
     models = args.out / "models"
-    models.mkdir(exist_ok=True)
-    kept = sorted({s for p in picked.values() for s in p.values()})
-    for s in kept:
-        src, dst = seed_dir(args, s), models / f"seed_{s}"
-        if src.resolve() != dst.resolve():  # (--eval-only on a finished run: already in place)
-            shutil.rmtree(dst, ignore_errors=True)
-            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("DONE"))
     for r in args.radii:
         for rank, s in picked[r].items():
             link = models / f"r{r:g}px_{rank}"
@@ -436,7 +425,7 @@ def write_results(args, seeds: list[int]):
         "",
         *table,
         "",
-        "## Models kept (`models/`)",
+        "## Best, median and worst model per radius (`models/r<r>px_<rank>`)",
         "",
         "| radius | " + " | ".join(RANKS) + " |",
         "|---|---|---|---|",
@@ -451,7 +440,7 @@ def write_results(args, seeds: list[int]):
     summary = {
         "complete": True,
         "seeds": seeds,
-        "kept": {f"{r:g}": picked[r] for r in args.radii},
+        "best_median_worst": {f"{r:g}": picked[r] for r in args.radii},
         "rheed_folo": git_commit(FOLO_DIR),
         "rheed_eval": git_commit(args.eval_dir),
         "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
@@ -459,7 +448,7 @@ def write_results(args, seeds: list[int]):
     (args.out / "trials.json").write_text(json.dumps(summary, indent=2))
     print("\n".join(table))
     print()
-    print("\n".join(md[md.index("## Models kept (`models/`)"):]))
+    print("\n".join(md[md.index("## Best, median and worst model per radius (`models/r<r>px_<rank>`)"):]))
 
 
 # ============================================================================
@@ -486,17 +475,14 @@ def main():
     p.add_argument("--nms-radius", type=float, default=6, help="TopCrop exclusion radius in FOLO grid cells")
     p.add_argument("--radii", type=float, nargs="+", default=RADII, help="match radii (px)")
     p.add_argument("--alpha", type=float, default=0.15, help="opacity of each box in the overlays")
-    p.add_argument("--keep-work", action="store_true", help="keep <out>/_work after writing the results")
     p.add_argument("--force", action="store_true", help="rerun even if --out already holds finished results")
     p.add_argument("--eval-only", action="store_true",
                    help="rerun only the evals on the trained models already in --out (see above)")
     p.add_argument("--only-seed", type=int, help=argparse.SUPPRESS)  # worker: run one seed here
     p.add_argument("--gpu-index", type=int, help=argparse.SUPPRESS)
-    p.add_argument("--seed-root", type=Path, help=argparse.SUPPRESS)
     args = p.parse_args()
     for k in ("out", "config", "train", "data", "synth", "gauss", "eval_dir"):
         setattr(args, k, getattr(args, k).resolve())
-    args.seed_root = (args.seed_root or args.out / "_work").resolve()
 
     if args.only_seed is not None:
         run_seed(args, args.only_seed)
@@ -538,40 +524,40 @@ def main():
         raise SystemExit(f"Seeds {failed} failed; logs in {work}. Rerun the same command to retry them.")
 
     write_results(args, seeds)
-    if not args.keep_work:
-        shutil.rmtree(work)
+    finish(args)
+
+
+def finish(args):
+    """Drop the run bookkeeping: <out>/_work and the per-seed DONE markers."""
+    shutil.rmtree(args.out / "_work")
+    for done in (args.out / "models").glob("seed_*/DONE"):
+        done.unlink()
     log(f"Results in {args.out}")
 
 
 def eval_only(args):
-    """Rerun the evals on the trained models in <out>/_work (if any), else <out>/models."""
+    """Rerun the evals on every trained model in <out>/models."""
     if args.force:
         raise SystemExit("--eval-only and --force don't go together (--force drops the models)")
     work = args.out / "_work"
-
-    def models_in(root: Path) -> list[int]:
-        return sorted(int(d.name.split("_")[1]) for d in root.glob("seed_*") if d.is_dir() and has_model(d))
-
-    args.seed_root = work if models_in(work) else args.out / "models"
-    seeds = models_in(args.seed_root)
+    seeds = sorted(int(d.name.split("_")[1]) for d in (args.out / "models").glob("seed_*")
+                   if d.is_dir() and has_model(d))
     if not seeds:
-        raise SystemExit(f"No trained models in {work} or {args.out / 'models'}")
+        raise SystemExit(f"No trained models in {args.out / 'models'}")
     # Name the training run in the results by its own script and config, not this call's defaults
     prev = work / "setup.json" if (work / "setup.json").exists() else args.out / "trials.json"
     if prev.exists():
         p = json.loads(prev.read_text())
         args.train = Path(p.get("train") or p["args"]["train"])
         args.config = Path(p.get("args", {}).get("config", args.out / "config.yaml"))
-    log(f"Re-evaluating {len(seeds)} model(s) in {args.seed_root}")
+    log(f"Re-evaluating {len(seeds)} model(s) in {args.out / 'models'}")
     work.mkdir(parents=True, exist_ok=True)
     failed = run_all(args, seeds, seeds)
     if failed:
         raise SystemExit(f"Seeds {failed} failed; logs in {work}. Rerun the same command to retry them.")
 
     write_results(args, seeds)
-    if not args.keep_work:
-        shutil.rmtree(work)
-    log(f"Results in {args.out}")
+    finish(args)
 
 
 if __name__ == "__main__":

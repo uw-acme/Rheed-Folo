@@ -63,6 +63,8 @@ python run_trials.py --out $SCRATCH/trials/<name> --jobid <id> [--config configs
 
 `--out` gets the synthetic hit rates at 4/8/12/16/20 px (`hit_rates.md`, also printed, and
 `hit_rates.csv`), the TopCrop boxes of all models overlaid on each frame
-(`topcrop_overlay_synth.pdf`, `topcrop_overlay_real.pdf`) and the best, median and worst
-model at each radius (`models/`). The run is resumable: rerun the same command after a
-crash. See the docstring for all options.
+(`topcrop_overlay_synth.pdf`, `topcrop_overlay_real.pdf`) and every trained model
+(`models/seed_<k>/`, with `models/r<r>px_<best|median|worst>` links to the best, median
+and worst one at each radius). The run is resumable: rerun the same command after a crash.
+After a change to the eval code, `--eval-only` re-evaluates all the models without
+retraining. See the docstring for all options.
