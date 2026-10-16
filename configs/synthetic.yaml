@@ -50,7 +50,9 @@ model:
   name: baby_yolo
   total_bits: 8          # TOTAL_BITS
   integer_bits: 0        # INTEGER_BITS
-  stem_filters: [4, 6, 8]  # one stride-2 QConv2D(3x3) + quantized ReLU per entry
+  # One residual block per entry: stride-2 QConv2D(3x3) + quantized ReLU,
+  # then QConv2D(3x3) + BatchNorm added back onto it.
+  block_filters: [4, 6, 8]
   head_filters: 8        # 1x1 Conv2D before the final 1x1 Conv2D + sigmoid
 
 # ----------------------------------------------------------------------------

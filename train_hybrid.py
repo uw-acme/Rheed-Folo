@@ -13,8 +13,8 @@ Pipeline:
     3. Mix them: ``hybrid.synthetic_fraction`` of the training and validation
        sets is synthetic, the rest real (training reshuffles the mixed set every
        epoch).
-    4. Build (or load) the quantized residual ``baby_yolo`` model of
-       ``train_real.py`` and train it with a weighted BCE loss, early stopping
+    4. Build (or load) the quantized residual ``baby_yolo`` model (shared with
+       ``train_real.py`` and ``train_synthetic.py``) and train it with a weighted BCE loss, early stopping
        and LR reduction.
     5. Test separately on real and synthetic test sets (``test_size`` frames
        each), then save the model, the config used, the training history, the
@@ -30,10 +30,11 @@ from pathlib import Path
 
 import numpy as np
 
-from train_real import RealGenerator, build_model, load_splits
+from train_real import RealGenerator, load_splits
 from train_real import load_config as load_real_config
 from train_synthetic import (
     SyntheticGenerator,
+    build_model,
     load_model,
     make_datasets,
     make_loss_wbce,

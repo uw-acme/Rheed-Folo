@@ -17,8 +17,8 @@ Pipeline:
     4. Save the model, the config used, the training history and a few
        image / label / prediction plots.
 
-Shared pieces (TensorFlow setup, loss, loading, training loop, plotting) are
-imported from ``train_synthetic.py``.
+Shared pieces (TensorFlow setup, model, loss, loading, training loop, plotting)
+are imported from ``train_synthetic.py``.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from scipy.ndimage import center_of_mass, gaussian_filter, label as label_blobs
 from tqdm import tqdm
 
 from train_synthetic import (
+    build_model,
     load_model,
     make_datasets,
     make_loss_wbce,
@@ -197,71 +198,6 @@ class RealGenerator:
         print(f"[{desc} Labels Shape]: {label_arr.shape}")
 
         return img_arr, label_arr
-
-
-# ============================================================================
-# Model
-# ============================================================================
-
-
-def build_model(cfg: dict):
-    from tensorflow.keras.activations import relu, sigmoid
-    from tensorflow.keras.layers import Activation, Add, BatchNormalization, Conv2D, Input
-    from tensorflow.keras.models import Model
-    from qkeras import QActivation, QConv2D
-    from qkeras.quantizers import quantized_bits, quantized_relu
-
-    m = cfg["model"]
-    total_bits, integer_bits = m["total_bits"], m["integer_bits"]
-
-    w_quant = quantized_bits(
-        total_bits, integer_bits, symmetric=False, keep_negative=True, alpha=1
-    )
-    relu_quant = quantized_relu(total_bits, integer_bits)
-
-    input_layer = Input(shape=(cfg["image"]["y"], cfg["image"]["x"], 1))
-
-    x = input_layer
-    for i, filters in enumerate(m["block_filters"], start=1):
-        x = QConv2D(
-            filters=filters,
-            kernel_size=3,
-            strides=2,
-            padding="same",
-            use_bias=False,
-            name=f"qconv2d_{i}_1",
-            kernel_quantizer=w_quant,
-            kernel_initializer="lecun_uniform",
-        )(x)
-        x = QActivation(relu_quant, name=f"qact_{i}_1")(x)
-        y = QConv2D(
-            filters=filters,
-            kernel_size=3,
-            padding="same",
-            use_bias=False,
-            name=f"qconv2d_{i}_2",
-            kernel_quantizer=w_quant,
-            kernel_initializer="lecun_uniform",
-        )(x)
-        y = BatchNormalization(name=f"b_{i}_2")(y)
-        x = Add(name=f"add_{i}")([x, y])
-
-    n = len(m["block_filters"])
-    x = Conv2D(m["head_filters"], 1, padding="same", use_bias=True, name=f"qconv2d_{n + 1}")(x)
-    x = Activation(relu, name=f"qact_{n + 1}")(x)
-
-    x = Conv2D(1, 1, padding="same", use_bias=True, name=f"qconv2d_{n + 2}")(x)
-    x_prob = Activation(sigmoid, name="sigmoid_out")(x)
-
-    model = Model(inputs=input_layer, outputs=x_prob, name=m["name"])
-
-    expected = (cfg["image"]["label_y"], cfg["image"]["label_x"], 1)
-    if tuple(model.output_shape[1:]) != expected:
-        raise ValueError(
-            f"Model output shape {model.output_shape[1:]} does not match label shape "
-            f"{expected}. len(model.block_filters) must equal log2(image.scale_factor)."
-        )
-    return model
 
 
 # ============================================================================

@@ -8,7 +8,8 @@ conversion). All constants live in a YAML config file:
 Pipeline:
     1. Generate train / validation / test sets of 2D-Gaussian images and their
        soft 1/scale_factor-resolution labels.
-    2. Build (or load) the quantized ``baby_yolo`` model.
+    2. Build (or load) the quantized residual ``baby_yolo`` model (the same model as
+       ``train_real.py`` and ``train_hybrid.py``).
     3. Train with a weighted BCE loss, early stopping and LR reduction.
     4. Save the model, the config used, the training history and a few
        image / label / prediction plots.
@@ -192,8 +193,10 @@ def setup_tensorflow(seed: int):
 
 
 def build_model(cfg: dict):
+    """Quantized residual ``baby_yolo`` model, shared by train_synthetic.py, train_real.py and
+    train_hybrid.py."""
     from tensorflow.keras.activations import relu, sigmoid
-    from tensorflow.keras.layers import Activation, Conv2D, Input
+    from tensorflow.keras.layers import Activation, Add, BatchNormalization, Conv2D, Input
     from tensorflow.keras.models import Model
     from qkeras import QActivation, QConv2D
     from qkeras.quantizers import quantized_bits, quantized_relu
@@ -209,7 +212,7 @@ def build_model(cfg: dict):
     input_layer = Input(shape=(cfg["image"]["y"], cfg["image"]["x"], 1))
 
     x = input_layer
-    for i, filters in enumerate(m["stem_filters"], start=1):
+    for i, filters in enumerate(m["block_filters"], start=1):
         x = QConv2D(
             filters=filters,
             kernel_size=3,
@@ -221,8 +224,19 @@ def build_model(cfg: dict):
             kernel_initializer="lecun_uniform",
         )(x)
         x = QActivation(relu_quant, name=f"qact_{i}_1")(x)
+        y = QConv2D(
+            filters=filters,
+            kernel_size=3,
+            padding="same",
+            use_bias=False,
+            name=f"qconv2d_{i}_2",
+            kernel_quantizer=w_quant,
+            kernel_initializer="lecun_uniform",
+        )(x)
+        y = BatchNormalization(name=f"b_{i}_2")(y)
+        x = Add(name=f"add_{i}")([x, y])
 
-    n = len(m["stem_filters"])
+    n = len(m["block_filters"])
     x = Conv2D(m["head_filters"], 1, padding="same", use_bias=True, name=f"qconv2d_{n + 1}")(x)
     x = Activation(relu, name=f"qact_{n + 1}")(x)
 
@@ -235,7 +249,7 @@ def build_model(cfg: dict):
     if tuple(model.output_shape[1:]) != expected:
         raise ValueError(
             f"Model output shape {model.output_shape[1:]} does not match label shape "
-            f"{expected}. len(model.stem_filters) must equal log2(image.scale_factor)."
+            f"{expected}. len(model.block_filters) must equal log2(image.scale_factor)."
         )
     return model
 
