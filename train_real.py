@@ -9,7 +9,7 @@ Pipeline:
     1. Split the growths of the h5 file into train / validation / test and
        sample frames from each, zero-padding them up to the model input size.
     2. Pseudo-label every frame: smooth the log-scaled spot region, threshold
-       it, and put a soft bump at the center of mass of each connected blob.
+       it, and put a soft bump at the peak of each connected blob.
        Train / validation frames get a random circular shift (label shifted
        to match); test frames are left in place.
     3. Build (or load) the quantized residual ``baby_yolo`` model and train it
@@ -31,7 +31,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import yaml
-from scipy.ndimage import center_of_mass, gaussian_filter, label as label_blobs
+from scipy.ndimage import gaussian_filter, label as label_blobs
 from tqdm import tqdm
 
 from train_synthetic import (
@@ -146,7 +146,13 @@ class RealGenerator:
         smoothed = gaussian_filter(np.log1p(cropped), sigma=self.labels["smoothing_sigma"])
         threshold = np.percentile(smoothed, self.labels["percentile"])
         blobs, num_features = label_blobs(smoothed > threshold)
-        centers = center_of_mass(smoothed, blobs, range(1, num_features + 1))
+
+        # Each blob's position is its brightest smoothed pixel (old_benchmark)
+        centers = []
+        for idx in range(1, num_features + 1):
+            coords = np.argwhere(blobs == idx)
+            intens = smoothed[coords[:, 0], coords[:, 1]]
+            centers.append(tuple(coords[intens.argmax()]))
 
         return self.make_soft_label(
             [
