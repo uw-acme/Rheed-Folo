@@ -14,7 +14,7 @@ Pipeline:
        Train / validation frames get a random circular shift (label shifted
        to match); test frames are left in place.
     3. Build (or load) the quantized residual ``baby_yolo`` model and train it
-       with a weighted BCE loss, early stopping and LR reduction.
+       with the alpha-weighted BCE + reward loss, early stopping and LR reduction.
     4. Save the model, the config used, the training history and a few
        image / label / prediction plots.
 
@@ -39,7 +39,6 @@ from train_synthetic import (
     build_model,
     load_model,
     make_datasets,
-    make_loss_wbce,
     save_plots,
     setup_tensorflow,
     train,
@@ -209,6 +208,23 @@ class RealGenerator:
         return img_arr, label_arr
 
 
+def make_loss_p(alpha_pos: float, reward_coef: float):
+    """alpha-weighted BCE minus a reward on the predicted probability at spots (old_benchmark)."""
+    import tensorflow as tf
+
+    def loss_p(y_true, y_pred):
+        eps = tf.keras.backend.epsilon()
+        y_pred = tf.clip_by_value(y_pred, eps, 1.0 - eps)
+
+        ce = -y_true * tf.math.log(y_pred) - (1.0 - y_true) * tf.math.log(1.0 - y_pred)
+        wce = alpha_pos * y_true * ce + (1 - alpha_pos) * (1.0 - y_true) * ce
+
+        reward = -reward_coef * y_true * y_pred
+        return tf.reduce_mean(wce + reward)
+
+    return loss_p
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -233,7 +249,7 @@ def main():
 
     # ---- Model ----------------------------------------------------------
     tf = setup_tensorflow(cfg["seed"])
-    loss_fn = make_loss_wbce(cfg["loss"]["pos_weight"], cfg["loss"]["neg_weight"])
+    loss_fn = make_loss_p(cfg["loss"]["alpha_pos"], cfg["loss"]["reward_coef"])
 
     t = cfg["training"]
     if t.get("load_from"):
@@ -259,7 +275,7 @@ def main():
     print(f"[Test Shape]: {test_label.shape}")
     print(f"[Prediction Shape]: {predictions.shape}")
     test_loss = float(loss_fn(test_label, predictions).numpy())
-    print(f"[Test Loss (wBCE)]: {test_loss:.6f}")
+    print(f"[Test Loss (loss_p)]: {test_loss:.6f}")
 
     # ---- Save -----------------------------------------------------------
     o = cfg["output"]
@@ -274,7 +290,7 @@ def main():
             with open(model_dir / "history.json", "w", encoding="utf-8") as f:
                 json.dump({k: [float(v) for v in vs] for k, vs in history.history.items()}, f, indent=2)
         with open(model_dir / "test_metrics.json", "w", encoding="utf-8") as f:
-            json.dump({"test_loss_wbce": test_loss}, f, indent=2)
+            json.dump({"test_loss_p": test_loss}, f, indent=2)
 
     if o["num_plot_examples"] > 0:
         plot_dir = (model_dir if o["save_model"] else Path(o["models_dir"])) / "plots"

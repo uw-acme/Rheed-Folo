@@ -14,8 +14,9 @@ Pipeline:
        sets is synthetic, the rest real (training reshuffles the mixed set every
        epoch).
     4. Build (or load) the quantized residual ``baby_yolo`` model (shared with
-       ``train_real.py`` and ``train_synthetic.py``) and train it with a weighted BCE loss, early stopping
-       and LR reduction.
+       ``train_real.py`` and ``train_synthetic.py``) and train it with the
+       alpha-weighted BCE + reward loss of ``train_real.py``, early stopping and
+       LR reduction.
     5. Test separately on real and synthetic test sets (``test_size`` frames
        each), then save the model, the config used, the training history, the
        test losses and a few image / label / prediction plots per source.
@@ -30,14 +31,13 @@ from pathlib import Path
 
 import numpy as np
 
-from train_real import RealGenerator, load_splits
+from train_real import RealGenerator, load_splits, make_loss_p
 from train_real import load_config as load_real_config
 from train_synthetic import (
     SyntheticGenerator,
     build_model,
     load_model,
     make_datasets,
-    make_loss_wbce,
     parse_angle,
     save_plots,
     setup_tensorflow,
@@ -121,7 +121,7 @@ def main():
 
     # ---- Model ----------------------------------------------------------
     tf = setup_tensorflow(cfg["seed"])
-    loss_fn = make_loss_wbce(cfg["loss"]["pos_weight"], cfg["loss"]["neg_weight"])
+    loss_fn = make_loss_p(cfg["loss"]["alpha_pos"], cfg["loss"]["reward_coef"])
 
     t = cfg["training"]
     if t.get("load_from"):
@@ -146,8 +146,8 @@ def main():
     predictions, test_losses = {}, {}
     for source, (img, label) in test.items():
         predictions[source] = model.predict(img, batch_size=d["batch_size"])
-        test_losses[f"test_loss_wbce_{source}"] = float(loss_fn(label, predictions[source]).numpy())
-        print(f"[Test Loss (wBCE), {source}]: {test_losses[f'test_loss_wbce_{source}']:.6f}")
+        test_losses[f"test_loss_p_{source}"] = float(loss_fn(label, predictions[source]).numpy())
+        print(f"[Test Loss (loss_p), {source}]: {test_losses[f'test_loss_p_{source}']:.6f}")
 
     # ---- Save -----------------------------------------------------------
     o = cfg["output"]

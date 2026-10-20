@@ -93,11 +93,13 @@ model:
   head_filters: 8        # 1x1 Conv2D before the final 1x1 Conv2D + sigmoid
 
 # ----------------------------------------------------------------------------
-# Loss
+# Loss: alpha-weighted BCE minus a reward on predicted probability at spots
 # ----------------------------------------------------------------------------
 loss:
-  pos_weight: 5.0        # POS_WEIGHT
-  neg_weight: 1.0        # NEG_WEIGHT
+  # mean(alpha_pos * y * BCE + (1 - alpha_pos) * (1 - y) * BCE - reward_coef * y * p)
+  # (old_benchmark)
+  alpha_pos: 0.97
+  reward_coef: 0.2
 
 # ----------------------------------------------------------------------------
 # Training
