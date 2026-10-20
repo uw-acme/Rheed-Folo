@@ -7,7 +7,8 @@ conversion). All constants live in a YAML config file:
 
 Pipeline:
     1. Split the growths of the h5 file into train / validation / test and
-       sample frames from each, zero-padding them up to the model input size.
+       sample frames from each, zero-padding them up to the model input size;
+       each training image is normalized by its own maximum.
     2. Pseudo-label every frame: smooth the log-scaled spot region, threshold
        it, and put a soft bump at the peak of each connected blob.
        Train / validation frames get a random circular shift (label shifted
@@ -197,7 +198,9 @@ class RealGenerator:
 
         for i in tqdm(range(num_images), desc=desc):
             img, label = self.img_gen(frames, transform)
-            img_arr[i] = img.astype(np.float32) / 256.0  # Normalize values to [0, 1)
+            img = img.astype(np.float32)
+            # Normalize each image by its own maximum to [0, 1), 8-bit steps (old_benchmark)
+            img_arr[i] = np.round(img / (img.max() + 1) * 256) / 256
             label_arr[i] = label.astype(np.float32) / 256.0
 
         print(f"[{desc} Images Shape]: {img_arr.shape}")
