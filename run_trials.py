@@ -161,13 +161,19 @@ def evaluate(args, model_path: Path, out_dir: Path):
     import inference  # Rheed-Eval/inference.py (imports TensorFlow)
 
     folo = inference.load_model(model_path)
-    gauss = inference.load_model(args.gauss)
+    # GaussNN scaling per model dir: older inference.py versions hard-code it
+    if hasattr(inference, "load_gauss"):
+        gauss, gauss_scaling = inference.load_gauss(args.gauss)
+        gauss_kw = {"gauss_scaling": gauss_scaling}
+    else:
+        gauss, gauss_kw = inference.load_model(args.gauss), {}
     # FOLO input padding: older inference.py versions always pad the frame to 320x320
     pad = inference.folo_pad(folo) if hasattr(inference, "folo_pad") else inference.PAD
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, h5_path, growth, index, n in eval_inputs(args):
         frame = inference.load_frame(h5_path, growth, index)
-        r = inference.run_pipeline(frame, folo, gauss, n=n, bg_subtract=True, nms_radius=args.nms_radius)
+        r = inference.run_pipeline(frame, folo, gauss, n=n, bg_subtract=True, nms_radius=args.nms_radius,
+                                   **gauss_kw)
         np.savez(out_dir / f"{name}.npz", folo_cells=r["folo_cells"], folo_scores=r["folo_scores"],
                  folo_pad=r.get("folo_pad", pad), params=r["params"])
 
