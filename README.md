@@ -68,3 +68,25 @@ python run_trials.py --out $SCRATCH/trials/<name> --jobid <id> [--config configs
 and worst one at each radius). The run is resumable: rerun the same command after a crash.
 After a change to the eval code, `--eval-only` re-evaluates all the models without
 retraining. See the docstring for all options.
+
+## hls4ml conversion
+
+`hls_convert.py` turns a saved model directory into a Vitis HLS project, following the
+"HLS" cells of the notebooks (Vitis backend, `io_stream`, Latency strategy, 2 ns clock,
+part `xcku035-fbva676-2-e`, project name `folo`):
+
+```bash
+python hls_convert.py Models/hybrid_flow_model            # project in folo_hls4ml_hybrid_flow_model/
+python hls_convert.py Models/hybrid_flow_model --build    # also run Vitis HLS synthesis
+```
+
+Without the Xilinx tools it still loads the model, writes the project, compiles the C++
+emulation and prints the QKeras-vs-HLS difference on a few synthetic frames
+(`compare.json`, `compare.npz`); testbench vectors go to `tb_data/`. `--inputs x.npy`
+uses your own frames, `--no-compile` only writes the project, `--reuse-factor` and
+`--fifo-opt` expose the notebook's commented-out options (the FIFO-depth optimization
+runs a Vitis cosim during conversion, so it needs the tools). The Xilinx install root
+defaults to the notebooks' path; pass `--xilinx <root>` or export `XILINX_HLS`,
+`XILINX_VITIS` and `XILINX_VIVADO` yourself. The exact hls4ml config used is saved as
+`hls_config.yaml` in the project. Note that hls4ml's default input precision is
+`ap_fixed<16,6>`: the core expects frames scaled to [0, 1) like the training data.

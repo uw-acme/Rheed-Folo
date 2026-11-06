@@ -11,3 +11,5 @@ Models
 __pycache__/
 
 eval/*
+# hls_convert.py output
+*_hls4ml_*/
